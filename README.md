@@ -22,6 +22,28 @@ one thing that must differ per machine.
 `resolve_location` refuses a reference that escapes its root via `..`, and accepts either
 separator so a Windows-authored reference resolves here.
 
+## Backup
+
+Backup, **not** sync — the database is per-machine and is never merged between machines.
+
+```
+uv run python scripts/backup.py [--commit --push]
+uv run python scripts/restore.py <dump> --db <target>
+```
+
+`backup.py` writes a replayable SQL dump to `<backup-root>/<host>/icebox.sql` plus a `meta.json`
+of row counts. Destination is `$CONCINNITY_BACKUP_DIR`, else the `backup` location, else
+`docs/concinnity-backup` — so it uses the same locations config as everything else.
+
+**Per-host directories** mean two machines never write the same file, so the backup cannot
+quietly turn into a sync. Text rather than a copied `.db` because it diffs and compresses, and
+because copying a live SQLite file (or a `-wal`/`-shm` pair out of step with it) yields a corrupt
+or stale database — `iterdump` reads through a read-only connection instead. Python's `sqlite3`
+rather than the CLI, which is not reliably present on Windows.
+
+`restore.py` refuses to overwrite an existing database without `--force`: restoring the *other*
+machine's dump over this one's board would destroy rankings that exist nowhere else.
+
 ## Data Store
 
 By default, data is stored at:
