@@ -7,6 +7,11 @@ from mcp.server.fastmcp import FastMCP
 
 from .store import IceboxStore
 from global_icebox import locations as _locations
+from global_icebox.tasks import TaskStore as _TaskStore
+
+
+def _tasks() -> _TaskStore:
+    return _TaskStore(store())
 
 mcp = FastMCP("Concinnity")
 
@@ -303,6 +308,87 @@ def remove_location(name: str) -> dict[str, Any]:
 def resolve_location(reference: str) -> dict[str, Any]:
     """Resolve a portable reference like 'future_work/mcp-servers.md' to a real local path."""
     return _locations.resolve_location(reference=reference)
+
+
+@mcp.tool()
+def add_task(
+    title: str,
+    description: str,
+    project: str | None = None,
+    repo: str | None = None,
+    location: str | None = None,
+    recommended_capabilities: list[str] | None = None,
+    depends_on: list[str] | None = None,
+    links: list[str] | None = None,
+    source: str | None = None,
+    task_key: str | None = None,
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Register a task in the tasks lane, status `open`. Cite `location` portably, e.g. 'docs/plan.md'."""
+    return _tasks().add_task(
+        title=title, description=description, project=project, repo=repo,
+        location=location, recommended_capabilities=recommended_capabilities,
+        depends_on=depends_on, links=links, source=source, task_key=task_key, tags=tags,
+    )
+
+
+@mcp.tool()
+def list_tasks(
+    status: str | None = None,
+    project: str | None = None,
+    repo: str | None = None,
+    claimed_by: str | None = None,
+    blocked: bool | None = None,
+    include_terminal: bool = False,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """List tasks with derived `blocked` and lease state. Terminal tasks are hidden by default."""
+    return _tasks().list_tasks(
+        status=status, project=project, repo=repo, claimed_by=claimed_by,
+        blocked=blocked, include_terminal=include_terminal, limit=limit,
+    )
+
+
+@mcp.tool()
+def get_task(task_id: str) -> dict[str, Any]:
+    """One task, with its blockers and lease state resolved."""
+    return _tasks().get_task(task_id)
+
+
+@mcp.tool()
+def claim_task(task_id: str, claimed_by: str, lease_minutes: int = 120) -> dict[str, Any]:
+    """Claim an open or released task for a lease. Refuses a blocked task or a live claim."""
+    return _tasks().claim_task(task_id=task_id, claimed_by=claimed_by, lease_minutes=lease_minutes)
+
+
+@mcp.tool()
+def start_task(task_id: str) -> dict[str, Any]:
+    """Move a claimed task to in_progress."""
+    return _tasks().start_task(task_id)
+
+
+@mcp.tool()
+def release_task(task_id: str, reason: str | None = None) -> dict[str, Any]:
+    """Give a claimed or in-progress task back to the pool."""
+    return _tasks().release_task(task_id=task_id, reason=reason)
+
+
+@mcp.tool()
+def mark_code_complete(task_id: str, ci_run: str) -> dict[str, Any]:
+    """Record a CI gate's verdict. Requires a CI run reference; this is the ONLY writer of code_complete."""
+    return _tasks().mark_code_complete(task_id=task_id, ci_run=ci_run)
+
+
+@mcp.tool()
+def accept_task(task_id: str, owner: str) -> dict[str, Any]:
+    """Owner-only: accept verified work. Code complete is not accepted."""
+    return _tasks().accept_task(task_id=task_id, owner=owner)
+
+
+@mcp.tool()
+def reiterate_task(task_id: str, owner: str, note: str) -> dict[str, Any]:
+    """Owner-only: send verified work back as a NEW task that supersedes this one."""
+    return _tasks().reiterate_task(task_id=task_id, owner=owner, note=note)
 
 
 def main() -> None:

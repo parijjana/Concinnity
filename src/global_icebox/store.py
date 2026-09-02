@@ -12,7 +12,21 @@ from uuid import uuid4
 
 TARGET_TYPES = {"project", "feature", "spin_off", "unknown"}
 STATUSES = {"icebox", "reviewing", "promoted", "rejected", "archived"}
-LANES = {"project_ideas", "backlog", "local_icebox", "done"}
+LANES = {"project_ideas", "backlog", "local_icebox", "done", "tasks"}
+# The tasks lane carries its own lifecycle. Work-plane section 3, 2026-08-28:
+#   open -> claimed -> in_progress -> code_complete -> accepted
+# with `released` off claimed/in_progress, and `reiterate` off code_complete into a NEW task
+# that supersedes it. `blocked` is deliberately absent: it is orthogonal and derived from
+# depends_on, so storing it would let it contradict the dependencies it is computed from.
+TASK_STATUSES = {
+    "open",
+    "claimed",
+    "in_progress",
+    "code_complete",
+    "accepted",
+    "reiterate",
+    "released",
+}
 PORTFOLIO_STATUSES = {"todo", "done"}
 COMPARISON_WINNERS = {"a", "b", "tie", "draw"}
 DRAFT_STATUSES = {"staged", "published"}
@@ -63,9 +77,28 @@ def validate_target_type(target_type: str) -> str:
     return target_type
 
 
-def validate_status(status: str) -> str:
-    if status not in STATUSES:
-        allowed = ", ".join(sorted(STATUSES))
+def validate_status(status: str, lane: str | None = None) -> str:
+    # Lane-scoped, because a task's lifecycle is not an idea's. The README already frames
+    # `status` as lightweight lifecycle metadata and `lane` as the scope, so the vocabulary
+    # following the lane is the existing model extended rather than a parallel column.
+    allowed_set = TASK_STATUSES if lane == "tasks" else STATUSES
+    if status not in allowed_set:
+        allowed = ", ".join(sorted(allowed_set))
+        scope = f" in the {lane} lane" if lane else ""
+        raise ValueError(f"status{scope} must be one of: {allowed}")
+    return status
+
+
+def validate_status_filter(status: str) -> str:
+    """Validate a status used as a SEARCH filter, where either vocabulary is legitimate.
+
+    Kept separate from validate_status on purpose: writing a status must be checked against
+    the row's own lane, but filtering by one must not be -- refusing `status="open"` because
+    the caller did not also name the tasks lane would make tasks unsearchable.
+    """
+    allowed_set = STATUSES | TASK_STATUSES
+    if status not in allowed_set:
+        allowed = ", ".join(sorted(allowed_set))
         raise ValueError(f"status must be one of: {allowed}")
     return status
 
@@ -133,6 +166,24 @@ class IceboxStore:
                 ensure_column(connection, "ideas", "external_project_key", "TEXT")
                 ensure_column(connection, "ideas", "external_item_key", "TEXT")
                 ensure_column(connection, "ideas", "external_item_metadata", "TEXT")
+                # Task fields (work-plane section 2). Added to `ideas` rather than to a new
+                # table so the tasks lane reuses the existing H2H board and ranking-run
+                # machinery unchanged -- that reuse is the whole point of extending the lane
+                # model instead of bolting on a subsystem.
+                for _task_column in (
+                    "repo",
+                    "location",
+                    "recommended_capabilities",
+                    "depends_on",
+                    "links",
+                    "claimed_by",
+                    "claimed_at",
+                    "lease_expires_at",
+                    "source",
+                    "ci_run",
+                    "verified_at",
+                ):
+                    ensure_column(connection, "ideas", _task_column, "TEXT")
                 connection.execute(
                     """
                     UPDATE ideas
@@ -363,8 +414,8 @@ class IceboxStore:
         if not description:
             raise ValueError("description is required")
         target_type = validate_target_type(target_type)
-        status = validate_status(status)
         lane = validate_lane(lane) if lane is not None else default_lane_for_target_type(target_type)
+        status = validate_status(status, lane)
         now = utc_now()
         record = {
             "id": str(uuid4()),
@@ -442,7 +493,7 @@ class IceboxStore:
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         if status is not None:
-            validate_status(status)
+            validate_status_filter(status)
         if target_type is not None:
             validate_target_type(target_type)
         if lane is not None:
@@ -507,7 +558,7 @@ class IceboxStore:
         if lane is not None:
             lane = validate_lane(lane)
         if status is not None:
-            validate_status(status)
+            validate_status_filter(status)
         if target_type is not None:
             validate_target_type(target_type)
         limit = clamp_limit(limit)
@@ -554,7 +605,7 @@ class IceboxStore:
         lane: str | None = None,
     ) -> list[dict[str, Any]]:
         if status is not None:
-            validate_status(status)
+            validate_status_filter(status)
         if lane is not None:
             lane = validate_lane(lane)
         filters = [
@@ -622,7 +673,12 @@ class IceboxStore:
         if lane is not None:
             updates["lane"] = validate_lane(lane)
         if status is not None:
-            updates["status"] = validate_status(status)
+            # Against the EFFECTIVE lane: the one being set in this same call if there is
+            # one, otherwise the row's current lane. Validating against neither would let a
+            # task be moved to an idea status, which is the contradiction the lane-scoped
+            # vocabulary exists to prevent.
+            effective_lane = updates.get("lane") or self.get_idea(idea_id).get("lane")
+            updates["status"] = validate_status(status, effective_lane)
         if tags is not None:
             updates["tags"] = json.dumps(normalize_tags(tags))
         if promotion_notes is not None:
@@ -1058,7 +1114,7 @@ class IceboxStore:
         order_by: str = "rating",
     ) -> list[dict[str, Any]]:
         if status is not None:
-            validate_status(status)
+            validate_status_filter(status)
         if target_type is not None:
             validate_target_type(target_type)
         if lane is not None:
@@ -1702,9 +1758,15 @@ def clamp_limit(limit: int) -> int:
     return limit
 
 
+TASK_LIST_COLUMNS = ("recommended_capabilities", "depends_on", "links")
+
+
 def row_to_idea(row: sqlite3.Row) -> dict[str, Any]:
     idea = dict(row)
     idea["tags"] = json.loads(idea["tags"])
+    for column in TASK_LIST_COLUMNS:
+        if column in idea:
+            idea[column] = json.loads(idea[column]) if idea[column] else []
     if "external_item_metadata" in idea:
         idea["external_item_metadata"] = parse_optional_json_payload(
             idea["external_item_metadata"],

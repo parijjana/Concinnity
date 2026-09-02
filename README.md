@@ -4,6 +4,63 @@ Concinnity is an independent local stdio MCP server for capturing and prioritizi
 
 The package folder, Python package, default database, and `global-icebox` MCP Hub id remain unchanged for compatibility.
 
+## CLI
+
+Every internal tool ships a command line, not only an MCP server (standing requirement, owner
+2026-09-02): an MCP server is only reachable from a client that has it registered, which over
+SSH or from a script does not exist.
+
+```
+concinnity task list                            # or: uv run python -m global_icebox.cli ...
+concinnity task add "Title" "Description" --repo pellucid --key SYNC-020
+concinnity task claim <id> --by agent-a
+concinnity task code-complete <id> --ci-run gha:12345
+concinnity task accept <id> --owner animesh
+concinnity rank pair --lane tasks
+concinnity location list
+```
+
+`task`, `idea`, `rank`, `location` and `backup` cover the whole tool surface. Human-readable
+output by default, `--json` on any command for machines, non-zero exit and a plain message on a
+refused transition. The CLI is a front door onto the same `IceboxStore` and `TaskStore` the MCP
+tools call — never a second implementation.
+
+## Tasks lane
+
+Tasks are rows in `ideas` with `lane = "tasks"`, not a separate table. That is what lets the
+existing H2H board, ranking runs and rating history rank tasks with **no changes at all**.
+
+```
+open ──► claimed ──► in_progress ──► code_complete ──► accepted
+             │              │
+             │              └──► reiterate ──► new task (supersedes)
+             └──► released (lease expired / agent gave up)
+```
+
+Two owner rules are enforced, not merely documented:
+
+- **`code_complete` requires a CI run reference** and is reachable only through
+  `mark_code_complete`. `accept` and `reiterate` both demand `code_complete` first, so nothing
+  can skip the gate.
+- **`accept` and `reiterate` are owner-only** and refuse to run without an explicit owner. An
+  agent cannot accept its own work.
+
+`blocked` is **not** a status: it is derived from `depends_on` on read, so it can never disagree
+with the dependencies that define it. Only `accepted` clears a dependency — code complete is not
+accepted. Claiming a blocked task is refused.
+
+A claim carries a **lease**. An expired lease makes a task reclaimable, so an agent that dies
+does not strand its work; a live one refuses a second claimant. `claimed_by` is kept after
+acceptance to record who did the work, but stops reading as a live claim.
+
+`start_task` is not in the plan's tool list. The status diagram has `claimed → in_progress` and
+nothing else could perform it, so the model would be unreachable without it.
+
+**Still open (work-plane Q1):** how a CI gate actually reaches Concinnity. Today
+`mark_code_complete` is invoked after a gate is observed, carrying its run id — candidate (a) in
+the plan, the one that leaves an agent in the loop. The plan calls this the genuinely undecided
+piece the whole model rests on.
+
 ## Locations
 
 Ideas cite files by a portable reference — `future_work/mcp-servers.md` — rather than an absolute

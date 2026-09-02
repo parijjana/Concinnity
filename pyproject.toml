@@ -7,6 +7,9 @@ dependencies = [
     "mcp>=1.0,<2.0",
 ]
 
+[project.scripts]
+concinnity = "global_icebox.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
