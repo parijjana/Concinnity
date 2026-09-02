@@ -105,13 +105,18 @@ def main() -> int:
 
     # Write the dump first and the metadata second, so metadata never describes a dump that is
     # not on disk yet. Both go through a temp file and a rename.
-    for path, text in ((sql_path, sql), (meta_path, json.dumps({
+    #
+    # An unchanged dump writes NOTHING. meta.json carries a generated_at timestamp, so
+    # rewriting it every run left it permanently modified in the working tree -- a file that is
+    # always dirty is noise that trains you to ignore `git status`.
+    writes = [] if unchanged else [(sql_path, sql), (meta_path, json.dumps({
         "host": host,
         "source_db": str(source),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "row_counts": counts,
         "restore": "uv run python scripts/restore.py <this-dir>/icebox.sql --db <target>",
-    }, indent=2, sort_keys=True) + "\n")):
+    }, indent=2, sort_keys=True) + "\n")]
+    for path, text in writes:
         tmp = path.with_name(path.name + f".tmp-{os.getpid()}")
         tmp.write_text(text, encoding="utf-8")
         tmp.replace(path)
