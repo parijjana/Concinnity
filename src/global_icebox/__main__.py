@@ -6,6 +6,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from .store import IceboxStore
+from global_icebox import locations as _locations
 
 mcp = FastMCP("Concinnity")
 
@@ -278,6 +279,30 @@ def recent_ideas() -> str:
     """Return recent ideas as formatted JSON."""
     ideas = store().list_ideas(limit=20)
     return json.dumps(ideas, indent=2)
+
+
+@mcp.tool()
+def list_locations() -> dict[str, Any]:
+    """List this machine's named filesystem roots, with the config path and whether each exists."""
+    return _locations.list_locations()
+
+
+@mcp.tool()
+def set_location(name: str, path: str) -> dict[str, Any]:
+    """Record where a named root lives on THIS machine, so ideas can cite files portably."""
+    return _locations.set_location(name=name, path=path)
+
+
+@mcp.tool()
+def remove_location(name: str) -> dict[str, Any]:
+    """Forget a named root. Removes the mapping only; nothing on disk is touched."""
+    return _locations.remove_location(name=name)
+
+
+@mcp.tool()
+def resolve_location(reference: str) -> dict[str, Any]:
+    """Resolve a portable reference like 'future_work/mcp-servers.md' to a real local path."""
+    return _locations.resolve_location(reference=reference)
 
 
 def main() -> None:

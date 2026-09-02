@@ -4,6 +4,24 @@ Concinnity is an independent local stdio MCP server for capturing and prioritizi
 
 The package folder, Python package, default database, and `global-icebox` MCP Hub id remain unchanged for compatibility.
 
+## Locations
+
+Ideas cite files by a portable reference — `future_work/mcp-servers.md` — rather than an absolute
+path, because the two machines disagree about where anything lives. Each machine keeps its own
+mapping from a location name to a real directory:
+
+```text
+~/.concinnity/config.json          # override with CONCINNITY_CONFIG
+```
+
+Managed with `list_locations`, `set_location`, `remove_location` and `resolve_location`. The
+config is intentionally outside the repo and outside the database: the repo is shared between
+machines, and the database is per-machine and never synced, so neither is the right home for the
+one thing that must differ per machine.
+
+`resolve_location` refuses a reference that escapes its root via `..`, and accepts either
+separator so a Windows-authored reference resolves here.
+
 ## Data Store
 
 By default, data is stored at:
