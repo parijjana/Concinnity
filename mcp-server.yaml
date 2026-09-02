@@ -30,6 +30,8 @@ scripts:
   start: scripts/start.ps1
   test: scripts/test.ps1
   launch_ui: scripts/launch-ui.ps1
+  start_posix: scripts/start.sh
+  test_posix: scripts/test.sh
 
 health:
   type: mcp_initialize
