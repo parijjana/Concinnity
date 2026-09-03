@@ -651,6 +651,7 @@ class IceboxStore:
         external_project_key: str | None = None,
         external_item_key: str | None = None,
         external_item_metadata: dict[str, Any] | str | None = None,
+        allow_task_status: bool = False,
     ) -> dict[str, Any]:
         self.get_idea(idea_id)
         updates: dict[str, Any] = {"updated_at": utc_now()}
@@ -678,6 +679,18 @@ class IceboxStore:
             # task be moved to an idea status, which is the contradiction the lane-scoped
             # vocabulary exists to prevent.
             effective_lane = updates.get("lane") or self.get_idea(idea_id).get("lane")
+            if effective_lane == "tasks" and not allow_task_status:
+                # Found 2026-09-03 by walking a fresh task straight from `open` to `accepted`
+                # through this method: no claim, no CI run, no owner. Every guarantee the task
+                # model makes is made by its transitions, so a generic setter that writes
+                # `status` is a hole straight through all of them. The transitions are the only
+                # supported path; `allow_task_status` exists solely for a deliberate
+                # administrative correction, which has to be spelled out at the call site.
+                raise ValueError(
+                    "refusing to set a task's status directly. Task status is governed by the "
+                    "transitions (claim/start/release/mark_code_complete/accept/reiterate), "
+                    "which enforce the CI gate and the owner-only rules. Use those."
+                )
             updates["status"] = validate_status(status, effective_lane)
         if tags is not None:
             updates["tags"] = json.dumps(normalize_tags(tags))

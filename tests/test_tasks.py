@@ -181,6 +181,37 @@ class TaskModelTests(unittest.TestCase):
                 tasks.store.add_idea(title="x", description="y", target_type="feature",
                                      lane="tasks", status="icebox")
 
+    def test_the_transition_model_cannot_be_bypassed_by_the_generic_updater(self) -> None:
+        # Found 2026-09-03: a fresh task went straight from `open` to `accepted` through
+        # update_idea -- no claim, no CI run, no owner. Every guarantee the model makes is made
+        # by its transitions, so a generic status setter voided all of them at once.
+        with temp_tasks() as tasks:
+            t = a_task(tasks)
+            with self.assertRaises(ValueError) as ctx:
+                tasks.store.update_idea(idea_id=t["id"], status="accepted")
+            self.assertIn("governed by the transitions", str(ctx.exception))
+            self.assertEqual(tasks.get_task(t["id"])["status"], "open")
+
+    def test_non_status_fields_are_still_editable_on_a_task(self) -> None:
+        with temp_tasks() as tasks:
+            t = a_task(tasks)
+            tasks.store.update_idea(idea_id=t["id"], title="Renamed")
+            self.assertEqual(tasks.get_task(t["id"])["title"], "Renamed")
+
+    def test_an_administrative_correction_must_be_spelled_out(self) -> None:
+        with temp_tasks() as tasks:
+            t = a_task(tasks)
+            tasks.store.update_idea(idea_id=t["id"], status="released",
+                                    allow_task_status=True)
+            self.assertEqual(tasks.get_task(t["id"])["status"], "released")
+
+    def test_an_idea_status_is_still_freely_settable(self) -> None:
+        with temp_tasks() as tasks:
+            idea = tasks.store.add_idea(title="x", description="y", target_type="project",
+                                        lane="project_ideas")
+            tasks.store.update_idea(idea_id=idea["id"], status="rejected")
+            self.assertEqual(tasks.store.get_idea(idea["id"])["status"], "rejected")
+
     def test_tasks_rank_on_the_existing_h2h_board(self) -> None:
         # The reason for extending the lane model rather than adding a subsystem: ranking,
         # ratings and history work on tasks with no changes at all.
