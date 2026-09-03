@@ -20,7 +20,9 @@ concinnity rank pair --lane tasks
 concinnity location list
 ```
 
-`task`, `idea`, `rank`, `location` and `backup` cover the whole tool surface. Human-readable
+`task`, `idea`, `rank`, `location` and `backup` cover the whole tool surface — **all 29 MCP
+tools have a CLI path, and a test asserts it**, so the CLI cannot quietly fall behind the server
+again. `--help` on any subcommand lists it. Human-readable
 output by default, `--json` on any command for machines, non-zero exit and a plain message on a
 refused transition. The CLI is a front door onto the same `IceboxStore` and `TaskStore` the MCP
 tools call — never a second implementation.

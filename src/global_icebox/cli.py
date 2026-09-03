@@ -97,6 +97,47 @@ def render_ideas(ideas: list[dict[str, Any]]) -> None:
         print(f"  {idea['lane']:<14} {idea['id'][:8]}  {_short(idea['title'], 60)}")
 
 
+def render_idea(idea: dict[str, Any]) -> None:
+    print(idea["title"])
+    print(f"  id          {idea['id']}")
+    for label, field in (("lane", "lane"), ("status", "status"), ("type", "target_type"),
+                         ("project", "target_project"), ("promoted", "promoted_at")):
+        if idea.get(field):
+            print(f"  {label:<11} {idea[field]}")
+    if idea.get("tags"):
+        print(f"  {'tags':<11} {', '.join(idea['tags'])}")
+    print()
+    print(idea["description"])
+
+
+def render_relations(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        print("No relationships.")
+        return
+    for r in rows:
+        note = f"  — {_short(r.get('notes'), 40)}" if r.get("notes") else ""
+        print(f"  {r['source_idea_id'][:8]} {r['relationship_type']:<14} "
+              f"{r['target_idea_id'][:8]}{note}")
+
+
+def render_comparisons(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        print("No comparisons recorded yet.")
+        return
+    for r in rows:
+        print(f"  {r.get('created_at', '')[:19]}  winner={r['winner']:<5} "
+              f"{r['idea_a_id'][:8]} vs {r['idea_b_id'][:8]}"
+              f"{'  ' + _short(r.get('rationale'), 44) if r.get('rationale') else ''}")
+
+
+def render_runs(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        print("No published ranking runs.")
+        return
+    for r in rows:
+        print(f"  {r.get('created_at', '')[:19]}  {r['id'][:8]}  {_short(r.get('name'), 48)}")
+
+
 def render_priorities(rows: list[dict[str, Any]]) -> None:
     if not rows:
         print("Nothing ranked yet.")
@@ -156,6 +197,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = t.add_parser("show", help="one task in full")
     p.add_argument("task_id")
 
+    p = t.add_parser("update", help="edit a task's mutable fields")
+    p.add_argument("task_id")
+    p.add_argument("--title")
+    p.add_argument("--description")
+    p.add_argument("--project", dest="target_project")
+    p.add_argument("--tag", action="append", dest="tags",
+                   help="replaces the tag list; repeat for several")
+
     p = t.add_parser("claim", help="claim an open task")
     p.add_argument("task_id")
     p.add_argument("--by", required=True, dest="claimed_by")
@@ -197,6 +246,36 @@ def build_parser() -> argparse.ArgumentParser:
     p = i.add_parser("search", help="search ideas")
     p.add_argument("query")
     p.add_argument("--limit", type=int, default=50)
+    p = i.add_parser("show", help="one idea in full")
+    p.add_argument("idea_id")
+    p = i.add_parser("update", help="edit an idea's mutable fields")
+    p.add_argument("idea_id")
+    p.add_argument("--title")
+    p.add_argument("--description")
+    p.add_argument("--lane")
+    p.add_argument("--status")
+    p.add_argument("--project", dest="target_project")
+    p.add_argument("--target-type")
+    p.add_argument("--tag", action="append", dest="tags",
+                   help="replaces the tag list; repeat for several")
+    p = i.add_parser("promote", help="mark an idea as having left the icebox")
+    p.add_argument("idea_id")
+    p.add_argument("--notes")
+    p = i.add_parser("relate", help="record a relationship between two ideas")
+    p.add_argument("source_idea_id")
+    p.add_argument("target_idea_id")
+    p.add_argument("relationship_type",
+                   choices=["duplicate_of", "related_to", "promoted_from", "spin_off_from",
+                            "supersedes"])
+    p.add_argument("--notes")
+    p = i.add_parser("relations", help="list recorded relationships")
+    p.add_argument("--idea")
+    p.add_argument("--type", dest="relationship_type")
+    p.add_argument("--limit", type=int, default=50)
+    p = i.add_parser("sync-portfolio", help="non-destructively upsert Portfolio features")
+    p.add_argument("--project", required=True)
+    p.add_argument("--features", required=True,
+                   help="path to a JSON file of features, or - for stdin")
 
     # --- ranking ---
     r = sub.add_parser("rank", help="head-to-head ranking").add_subparsers(dest="sub", required=True)
@@ -210,6 +289,21 @@ def build_parser() -> argparse.ArgumentParser:
     p = r.add_parser("list", help="the priority board")
     p.add_argument("--lane")
     p.add_argument("--limit", type=int, default=50)
+    p = r.add_parser("history", help="recent comparison records")
+    p.add_argument("--idea")
+    p.add_argument("--limit", type=int, default=50)
+    p = r.add_parser("runs", help="published ranking sessions")
+    p.add_argument("--limit", type=int, default=50)
+    p = r.add_parser("run", help="one published ranking session")
+    p.add_argument("run_id")
+    p = r.add_parser("rank-history", help="historical rating snapshots")
+    p.add_argument("--idea")
+    p.add_argument("--limit", type=int, default=200)
+    p = r.add_parser("publish", help="persist a ranking session from a JSON payload")
+    p.add_argument("name")
+    p.add_argument("--payload", required=True,
+                   help="path to a JSON file with decisions[] and rankings[], or - for stdin")
+    p.add_argument("--notes")
 
     # --- locations ---
     loc = sub.add_parser("location", help="named filesystem roots")
@@ -231,6 +325,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _given(args: argparse.Namespace, *names: str) -> dict[str, Any]:
+    """Only the flags actually supplied.
+
+    argparse leaves an unsupplied flag as None, and the store treats None as 'leave alone' --
+    but passing every field explicitly would make a typo in one flag look like a deliberate
+    blanking of the others. Filtering here keeps an edit to exactly what was typed.
+    """
+    return {n: getattr(args, n) for n in names if getattr(args, n, None) is not None}
+
+
+def _load_json(path: str) -> Any:
+    if path == "-":
+        return json.load(sys.stdin)
+    return json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
+
+
 def run(args: argparse.Namespace) -> int:
     store = IceboxStore(Path(args.db).expanduser()) if args.db else IceboxStore()
     tasks = TaskStore(store)
@@ -250,6 +360,14 @@ def run(args: argparse.Namespace) -> int:
                                   claimed_by=args.claimed_by, blocked=blocked,
                                   include_terminal=args.all, limit=args.limit), j, render_tasks)
         elif args.sub == "show":
+            _out(tasks.get_task(args.task_id), j, render_task)
+        elif args.sub == "update":
+            fields = _given(args, "title", "description", "target_project", "tags")
+            if not fields:
+                print("error: nothing to update — pass at least one field", file=sys.stderr)
+                return 1
+            tasks.get_task(args.task_id)      # refuses if it is not a task
+            store.update_idea(idea_id=args.task_id, **fields)
             _out(tasks.get_task(args.task_id), j, render_task)
         elif args.sub == "claim":
             _out(tasks.claim_task(args.task_id, args.claimed_by, args.lease_minutes), j, render_task)
@@ -277,6 +395,32 @@ def run(args: argparse.Namespace) -> int:
                  j, render_ideas)
         elif args.sub == "search":
             _out(store.search_ideas(query=args.query, limit=args.limit), j, render_ideas)
+        elif args.sub == "show":
+            _out(store.get_idea(args.idea_id), j, render_idea)
+        elif args.sub == "update":
+            fields = _given(args, "title", "description", "lane", "status", "target_project",
+                            "target_type", "tags")
+            if not fields:
+                print("error: nothing to update — pass at least one field", file=sys.stderr)
+                return 1
+            _out(store.update_idea(idea_id=args.idea_id, **fields), j, render_idea)
+        elif args.sub == "promote":
+            _out(store.promote_idea(idea_id=args.idea_id, promotion_notes=args.notes), j,
+                 lambda r: print(f"promoted: {r['idea']['title']}"))
+        elif args.sub == "relate":
+            _out(store.add_idea_relationship(
+                source_idea_id=args.source_idea_id, target_idea_id=args.target_idea_id,
+                relationship_type=args.relationship_type, notes=args.notes), j,
+                 lambda r: print(f"{args.source_idea_id[:8]} {args.relationship_type} "
+                                 f"{args.target_idea_id[:8]}"))
+        elif args.sub == "relations":
+            _out(store.list_idea_relationships(idea_id=args.idea,
+                                               relationship_type=args.relationship_type,
+                                               limit=args.limit), j, render_relations)
+        elif args.sub == "sync-portfolio":
+            _out(store.sync_portfolio_features(project=args.project,
+                                               features=_load_json(args.features)), j,
+                 lambda r: print(json.dumps(r, indent=2, default=str)))
 
     elif args.command == "rank":
         if args.sub == "pair":
@@ -288,6 +432,24 @@ def run(args: argparse.Namespace) -> int:
                  lambda r: print("comparison recorded"))
         elif args.sub == "list":
             _out(store.list_priorities(lane=args.lane, limit=args.limit), j, render_priorities)
+        elif args.sub == "history":
+            _out(store.get_comparison_history(idea_id=args.idea, limit=args.limit), j,
+                 render_comparisons)
+        elif args.sub == "runs":
+            _out(store.list_ranking_runs(limit=args.limit), j, render_runs)
+        elif args.sub == "run":
+            _out(store.get_ranking_run(args.run_id), j,
+                 lambda r: print(json.dumps(r, indent=2, default=str)))
+        elif args.sub == "rank-history":
+            _out(store.get_rank_history(idea_id=args.idea, limit=args.limit), j,
+                 lambda rows: print(json.dumps(rows, indent=2, default=str)))
+        elif args.sub == "publish":
+            payload = _load_json(args.payload)
+            _out(store.publish_ranking_run(
+                name=args.name, filters=payload.get("filters"),
+                decisions=payload.get("decisions", []),
+                rankings=payload.get("rankings", []), notes=args.notes), j,
+                 lambda r: print(f"published ranking run {r.get('id', '')}"))
 
     elif args.command == "location":
         if args.sub == "list":
