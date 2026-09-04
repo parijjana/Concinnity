@@ -18,6 +18,14 @@ LANES = {"project_ideas", "backlog", "local_icebox", "done", "tasks"}
 # with `released` off claimed/in_progress, and `reiterate` off code_complete into a NEW task
 # that supersedes it. `blocked` is deliberately absent: it is orthogonal and derived from
 # depends_on, so storing it would let it contradict the dependencies it is computed from.
+# A task's kind decides whether a CI gate can ever speak for it. Added 2026-09-04 after
+# demonstrating that `accepted` was reachable only from `code_complete`, so a decision task --
+# one that will never have a run -- was stuck the moment it was claimed.
+TASK_KINDS = {"code", "decision", "docs"}
+# Only these can carry a CI verdict. Everything else reaches `accepted` by owner decision, and
+# must never be able to claim a verdict it has no right to.
+VERIFIABLE_KINDS = {"code"}
+
 TASK_STATUSES = {
     "open",
     "claimed",
@@ -87,6 +95,52 @@ def validate_status(status: str, lane: str | None = None) -> str:
         scope = f" in the {lane} lane" if lane else ""
         raise ValueError(f"status{scope} must be one of: {allowed}")
     return status
+
+
+def validate_task_kind(kind: str) -> str:
+    value = (kind or "").strip().casefold()
+    if value not in TASK_KINDS:
+        raise ValueError(f"kind must be one of: {', '.join(sorted(TASK_KINDS))}")
+    return value
+
+
+# Acceptance selectors say what evidence a task needs, so a run can be matched to a task
+# without either side knowing about the other (CI_STANDARD section 11.6). `gate:green` is the
+# honest weak form -- the repository is green -- and is NOT sufficient on its own for work whose
+# subject the gate cannot see.
+_SELECTOR_RE = re.compile(r"^(gate:green|test:\S.*|check:[A-Za-z0-9_.-]+|none)$")
+
+
+def validate_acceptance(selectors: list[str] | None, kind: str) -> list[str]:
+    """Normalise and check a task's acceptance list against its kind."""
+    verifiable = kind in VERIFIABLE_KINDS
+    values: list[str] = []
+    for raw in selectors or []:
+        value = str(raw).strip()
+        if not value:
+            continue
+        if not _SELECTOR_RE.match(value):
+            raise ValueError(
+                f"invalid acceptance selector {value!r}. Expected one of: gate:green, "
+                "test:<id>, check:<G-id>, none"
+            )
+        if value not in values:
+            values.append(value)
+    if not values:
+        # The default states the honest minimum rather than leaving the field empty, which
+        # would read as "no criterion" and let anything satisfy it.
+        return ["gate:green"] if verifiable else ["none"]
+    if not verifiable and values != ["none"]:
+        raise ValueError(
+            f"a {kind!r} task cannot require CI evidence ({', '.join(values)}); no run will ever "
+            "exist for it. Use kind='code', or leave acceptance unset."
+        )
+    if verifiable and "none" in values:
+        raise ValueError(
+            "a 'code' task cannot accept 'none' as evidence — that is what kind='decision' or "
+            "kind='docs' is for."
+        )
+    return values
 
 
 def validate_status_filter(status: str) -> str:
@@ -182,6 +236,8 @@ class IceboxStore:
                     "source",
                     "ci_run",
                     "verified_at",
+                    "kind",
+                    "acceptance",
                 ):
                     ensure_column(connection, "ideas", _task_column, "TEXT")
                 connection.execute(
@@ -1771,7 +1827,7 @@ def clamp_limit(limit: int) -> int:
     return limit
 
 
-TASK_LIST_COLUMNS = ("recommended_capabilities", "depends_on", "links")
+TASK_LIST_COLUMNS = ("recommended_capabilities", "depends_on", "links", "acceptance")
 
 
 def row_to_idea(row: sqlite3.Row) -> dict[str, Any]:

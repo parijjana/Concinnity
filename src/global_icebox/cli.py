@@ -47,7 +47,9 @@ def _task_line(task: dict[str, Any]) -> str:
         flags.append(f"lease-expired({task['claimed_by']})")
     suffix = ("  " + " ".join(flags)) if flags else ""
     key = task.get("external_item_key") or task["id"][:8]
-    return f"  {task['status']:<14} {key:<12} {_short(task['title'], 52)}{suffix}"
+    kind = task.get("kind", "code")
+    tag = "" if kind == "code" else f" [{kind}]"
+    return f"  {task['status']:<14} {key:<12} {_short(task['title'], 48)}{tag}{suffix}"
 
 
 def render_tasks(tasks: list[dict[str, Any]]) -> None:
@@ -69,6 +71,10 @@ def render_task(task: dict[str, Any]) -> None:
     if task.get("external_item_key"):
         print(f"  key         {task['external_item_key']}")
     print(f"  status      {task['status']}")
+    print(f"  kind        {task.get('kind', 'code')}"
+          f"{'' if task.get('verifiable', True) else '   (no CI verdict — owner accepts)'}")
+    if task.get("acceptance"):
+        print(f"  accept when {', '.join(task['acceptance'])}")
     for label, field in (("project", "target_project"), ("repo", "repo"),
                          ("location", "location"), ("source", "source"),
                          ("ci run", "ci_run"), ("verified", "verified_at")):
@@ -174,6 +180,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = t.add_parser("add", help="register a task")
     p.add_argument("title")
     p.add_argument("description")
+    p.add_argument("--kind", choices=["code", "decision", "docs"], default="code",
+                   help="code is CI-verifiable; decision and docs are accepted by the owner")
+    p.add_argument("--accept-when", action="append", dest="acceptance", default=[],
+                   metavar="SELECTOR",
+                   help="gate:green | test:<id> | check:<G-id> | none; repeat for several")
     p.add_argument("--project")
     p.add_argument("--repo")
     p.add_argument("--location", help="portable reference, e.g. docs/plan.md")
@@ -186,6 +197,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = t.add_parser("list", help="list tasks")
     p.add_argument("--status", choices=STATUS_ORDER)
+    p.add_argument("--kind", choices=["code", "decision", "docs"])
     p.add_argument("--project")
     p.add_argument("--repo")
     p.add_argument("--claimed-by")
@@ -349,7 +361,8 @@ def run(args: argparse.Namespace) -> int:
     if args.command == "task":
         if args.sub == "add":
             task = tasks.add_task(
-                title=args.title, description=args.description, project=args.project,
+                title=args.title, description=args.description,
+                kind=args.kind, acceptance=args.acceptance, project=args.project,
                 repo=args.repo, location=args.location,
                 recommended_capabilities=args.capabilities, depends_on=args.depends_on,
                 links=args.links, source=args.source, task_key=args.task_key, tags=args.tags)
@@ -357,7 +370,7 @@ def run(args: argparse.Namespace) -> int:
         elif args.sub == "list":
             blocked = True if args.blocked else (False if args.unblocked else None)
             _out(tasks.list_tasks(status=args.status, project=args.project, repo=args.repo,
-                                  claimed_by=args.claimed_by, blocked=blocked,
+                                  claimed_by=args.claimed_by, blocked=blocked, kind=args.kind,
                                   include_terminal=args.all, limit=args.limit), j, render_tasks)
         elif args.sub == "show":
             _out(tasks.get_task(args.task_id), j, render_task)

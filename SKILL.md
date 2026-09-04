@@ -44,6 +44,9 @@ The `tasks` lane registers work, ranks it on the same H2H board as ideas, and dr
   absolute path.
 - `claim_task` before working, with a lease; `release_task` if you stop. A blocked task cannot
   be claimed, and `blocked` is derived from `depends_on`, so clear the dependency, not the flag.
+- **Choose the kind honestly at `add_task` time.** `code` only if a CI run could genuinely speak
+  for it; `decision` or `docs` otherwise. A wrong kind either strands the task or lets it claim
+  evidence it cannot have.
 - **Never call `mark_code_complete` without having actually observed a CI gate pass**, and pass
   its run id. This is the one status an agent must not narrate into existence.
 - **Never call `accept_task` or `reiterate_task` on your own behalf.** Both are the owner's, and

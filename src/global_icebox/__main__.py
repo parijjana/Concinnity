@@ -314,6 +314,8 @@ def resolve_location(reference: str) -> dict[str, Any]:
 def add_task(
     title: str,
     description: str,
+    kind: str = "code",
+    acceptance: list[str] | None = None,
     project: str | None = None,
     repo: str | None = None,
     location: str | None = None,
@@ -324,9 +326,10 @@ def add_task(
     task_key: str | None = None,
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Register a task in the tasks lane, status `open`. Cite `location` portably, e.g. 'docs/plan.md'."""
+    """Register a task. kind: code (CI-verifiable) | decision | docs. acceptance: gate:green, test:<id>, check:<G-id>, none."""
     return _tasks().add_task(
-        title=title, description=description, project=project, repo=repo,
+        title=title, description=description, kind=kind, acceptance=acceptance,
+        project=project, repo=repo,
         location=location, recommended_capabilities=recommended_capabilities,
         depends_on=depends_on, links=links, source=source, task_key=task_key, tags=tags,
     )
@@ -339,13 +342,14 @@ def list_tasks(
     repo: str | None = None,
     claimed_by: str | None = None,
     blocked: bool | None = None,
+    kind: str | None = None,
     include_terminal: bool = False,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     """List tasks with derived `blocked` and lease state. Terminal tasks are hidden by default."""
     return _tasks().list_tasks(
         status=status, project=project, repo=repo, claimed_by=claimed_by,
-        blocked=blocked, include_terminal=include_terminal, limit=limit,
+        blocked=blocked, kind=kind, include_terminal=include_terminal, limit=limit,
     )
 
 

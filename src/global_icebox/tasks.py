@@ -33,10 +33,13 @@ from typing import Any
 from global_icebox.store import (
     IceboxStore,
     TASK_STATUSES,
+    VERIFIABLE_KINDS,
     normalize_tags,
     optional_text,
     row_to_idea,
     utc_now,
+    validate_acceptance,
+    validate_task_kind,
 )
 
 TASK_LANE = "tasks"
@@ -51,6 +54,14 @@ TRANSITIONS: dict[str, set[str]] = {
     "code_complete": {"claimed", "in_progress"},
     "accept": {"code_complete"},
     "reiterate": {"code_complete"},
+}
+
+# A task whose kind no CI gate can speak for never passes through `code_complete`, so it needs
+# its own route to `accepted`. The owner requirement is unchanged -- still owner-only -- but the
+# gate requirement cannot apply to work that will never have a run.
+UNVERIFIABLE_TRANSITIONS: dict[str, set[str]] = {
+    "accept": {"open", "claimed", "in_progress"},
+    "reiterate": {"accepted"},
 }
 
 TERMINAL = {"accepted", "reiterate"}
@@ -134,6 +145,9 @@ class TaskStore:
         task["blocked"] = bool(blockers)
         task["blocked_by"] = blockers
         task["lease_expired"] = lease_expired(task)
+        task.setdefault("kind", "code")
+        task["kind"] = task.get("kind") or "code"
+        task["verifiable"] = self.is_verifiable(task)
         # A claim is only live while the task is actually being worked. Retaining claimed_by
         # after acceptance is deliberate -- it records who did the work -- but rendering that
         # as a live claim would misreport a finished task as occupied.
@@ -151,6 +165,7 @@ class TaskStore:
         repo: str | None = None,
         claimed_by: str | None = None,
         blocked: bool | None = None,
+        kind: str | None = None,
         include_terminal: bool = False,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
@@ -179,6 +194,8 @@ class TaskStore:
             tasks = [t for t in tasks if (t.get("claimed_by") or "") == claimed_by]
         if blocked is not None:
             tasks = [t for t in tasks if t["blocked"] is blocked]
+        if kind is not None:
+            tasks = [t for t in tasks if t["kind"] == kind]
         tasks.sort(key=lambda t: (t["status"], t["created_at"]))
         return tasks[: max(1, limit)]
 
@@ -188,6 +205,8 @@ class TaskStore:
         self,
         title: str,
         description: str,
+        kind: str = "code",
+        acceptance: list[str] | None = None,
         project: str | None = None,
         repo: str | None = None,
         location: str | None = None,
@@ -198,6 +217,8 @@ class TaskStore:
         task_key: str | None = None,
         tags: list[str] | None = None,
     ) -> dict[str, Any]:
+        kind = validate_task_kind(kind)
+        acceptance = validate_acceptance(acceptance, kind)
         record = self.store.add_idea(
             title=title,
             description=description,
@@ -218,6 +239,8 @@ class TaskStore:
                 "depends_on": _json_list(depends_on),
                 "links": _json_list(links),
                 "source": optional_text(source),
+                "kind": kind,
+                "acceptance": json.dumps(acceptance),
             },
         )
         return self.get_task(record["id"])
@@ -233,9 +256,15 @@ class TaskStore:
                     {**fields, "id": task_id},
                 )
 
+    @staticmethod
+    def is_verifiable(task: dict[str, Any]) -> bool:
+        return (task.get("kind") or "code") in VERIFIABLE_KINDS
+
     def _require(self, task_id: str, transition: str) -> dict[str, Any]:
         task = self._raw(task_id)
         allowed = TRANSITIONS[transition]
+        if not self.is_verifiable(task) and transition in UNVERIFIABLE_TRANSITIONS:
+            allowed = UNVERIFIABLE_TRANSITIONS[transition]
         if task["status"] not in allowed:
             raise TaskError(
                 f"cannot {transition} a task in status {task['status']!r}; "
@@ -298,6 +327,12 @@ class TaskStore:
         return self.get_task(task_id)
 
     def mark_code_complete(self, task_id: str, ci_run: str) -> dict[str, Any]:
+        task = self._raw(task_id)
+        if not self.is_verifiable(task):
+            raise TaskError(
+                f"a {task.get('kind')!r} task has no CI verdict and cannot be code_complete. "
+                "No run will ever exist for it; the owner accepts it directly."
+            )
         run = optional_text(ci_run)
         if not run:
             raise TaskError(
@@ -328,6 +363,8 @@ class TaskStore:
             title=original["title"],
             description=f"{note_text}\n\nReiteration of: {original['title']}\n"
                         f"{original['description']}",
+            kind=original.get("kind") or "code",
+            acceptance=original.get("acceptance"),
             project=original.get("target_project"),
             repo=original.get("repo"),
             location=original.get("location"),

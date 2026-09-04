@@ -47,6 +47,32 @@ Two owner rules are enforced, not merely documented:
 - **`accept` and `reiterate` are owner-only** and refuse to run without an explicit owner. An
   agent cannot accept its own work.
 
+### Kinds and acceptance
+
+A task's **kind** decides whether a CI gate can ever speak for it.
+
+| Kind | Reaches `accepted` via | Acceptance |
+|---|---|---|
+| `code` (default) | `code_complete`, i.e. a CI verdict | `gate:green`, `test:<id>`, `check:<G-id>` |
+| `decision` | the owner, directly | `none` |
+| `docs` | the owner, directly | `none` |
+
+Without kinds, `accepted` was reachable only from `code_complete`, so a decision task — one that
+will never have a run — was **stuck the moment it was claimed**. A non-verifiable kind now
+routes straight to `accepted`, still owner-only, and is refused if it tries to claim a CI
+verdict it has no right to.
+
+**Acceptance selectors** say what evidence a task needs, so a run can be matched to a task
+without either side knowing about the other. They default to the honest minimum — `gate:green`
+for code, `none` otherwise — because an empty list reads as "no criterion", which anything
+satisfies. A kind and its evidence must agree: a `decision` cannot require CI, and a `code` task
+cannot accept `none`.
+
+**What selectors do not yet do: nothing evaluates them.** They are declared and validated; no
+poller matches them against runs, because what a run actually verifies about a task is still
+open — see `CI_STANDARD.md` §11.4–11.6 and the tasks `VERIFY-JOIN` and `WP-Q1`. Declaring the
+criterion is the half that can be settled now.
+
 `blocked` is **not** a status: it is derived from `depends_on` on read, so it can never disagree
 with the dependencies that define it. Only `accepted` clears a dependency — code complete is not
 accepted. Claiming a blocked task is refused.

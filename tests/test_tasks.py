@@ -212,6 +212,99 @@ class TaskModelTests(unittest.TestCase):
             tasks.store.update_idea(idea_id=idea["id"], status="rejected")
             self.assertEqual(tasks.store.get_idea(idea["id"])["status"], "rejected")
 
+    def test_a_decision_task_reaches_accepted_without_a_gate(self) -> None:
+        # The defect this fixes: `accepted` was reachable only from `code_complete`, so a task
+        # that will never have a CI run was stuck the moment it was claimed.
+        with temp_tasks() as tasks:
+            t = a_task(tasks, kind="decision")
+            tasks.claim_task(t["id"], "owner")
+            self.assertEqual(tasks.accept_task(t["id"], "owner")["status"], "accepted")
+
+    def test_a_decision_task_can_be_accepted_straight_from_open(self) -> None:
+        # An owner deciding something need not claim it first.
+        with temp_tasks() as tasks:
+            t = a_task(tasks, kind="decision")
+            self.assertEqual(tasks.accept_task(t["id"], "owner")["status"], "accepted")
+
+    def test_a_decision_task_cannot_claim_a_ci_verdict(self) -> None:
+        with temp_tasks() as tasks:
+            t = a_task(tasks, kind="decision")
+            tasks.claim_task(t["id"], "owner")
+            with self.assertRaises(TaskError) as ctx:
+                tasks.mark_code_complete(t["id"], "gha:1")
+            self.assertIn("no CI verdict", str(ctx.exception))
+
+    def test_accept_is_still_owner_only_for_every_kind(self) -> None:
+        with temp_tasks() as tasks:
+            for kind in ("decision", "docs"):
+                t = a_task(tasks, kind=kind)
+                with self.assertRaises(TaskError):
+                    tasks.accept_task(t["id"], "")
+
+    def test_a_code_task_still_cannot_skip_its_gate(self) -> None:
+        with temp_tasks() as tasks:
+            t = a_task(tasks)                       # kind defaults to code
+            tasks.claim_task(t["id"], "agent-a")
+            with self.assertRaises(TaskError):
+                tasks.accept_task(t["id"], "owner")
+
+    def test_acceptance_defaults_state_the_honest_minimum(self) -> None:
+        # An empty list would read as "no criterion", which anything satisfies.
+        with temp_tasks() as tasks:
+            self.assertEqual(a_task(tasks)["acceptance"], ["gate:green"])
+            self.assertEqual(a_task(tasks, kind="decision")["acceptance"], ["none"])
+
+    def test_selectors_are_validated(self) -> None:
+        with temp_tasks() as tasks:
+            for good in (["gate:green"], ["test:suite::case"], ["check:G4"],
+                         ["test:a", "check:G2"]):
+                self.assertEqual(a_task(tasks, acceptance=good)["acceptance"], good)
+            for bad in (["whenever"], ["test:"], ["check:"], ["gate:blue"]):
+                with self.assertRaises(ValueError, msg=f"{bad} should be rejected"):
+                    a_task(tasks, acceptance=bad)
+
+    def test_a_kind_and_its_evidence_must_agree(self) -> None:
+        with temp_tasks() as tasks:
+            with self.assertRaises(ValueError):
+                a_task(tasks, kind="decision", acceptance=["gate:green"])
+            with self.assertRaises(ValueError):
+                a_task(tasks, kind="code", acceptance=["none"])
+
+    def test_duplicate_selectors_collapse(self) -> None:
+        with temp_tasks() as tasks:
+            t = a_task(tasks, acceptance=["check:G4", "check:G4", "gate:green"])
+            self.assertEqual(t["acceptance"], ["check:G4", "gate:green"])
+
+    def test_an_unknown_kind_is_refused(self) -> None:
+        with temp_tasks() as tasks:
+            with self.assertRaises(ValueError):
+                a_task(tasks, kind="wishful")
+
+    def test_reiterating_a_decision_reopens_it_from_accepted(self) -> None:
+        with temp_tasks() as tasks:
+            t = a_task(tasks, kind="decision")
+            tasks.accept_task(t["id"], "owner")
+            result = tasks.reiterate_task(t["id"], "owner", "the answer changed")
+            self.assertEqual(result["original"]["status"], "reiterate")
+            self.assertEqual(result["successor"]["kind"], "decision",
+                             "a reiterated decision must not become a code task")
+            self.assertEqual(result["successor"]["acceptance"], ["none"])
+
+    def test_existing_rows_without_a_kind_read_as_code(self) -> None:
+        # The column is added by migration, so rows written before it exist must not break.
+        with temp_tasks() as tasks:
+            t = a_task(tasks)
+            tasks._write(t["id"], {"kind": None})
+            self.assertEqual(tasks.get_task(t["id"])["kind"], "code")
+            self.assertTrue(tasks.get_task(t["id"])["verifiable"])
+
+    def test_kind_filters_the_listing(self) -> None:
+        with temp_tasks() as tasks:
+            a_task(tasks, title="Code one")
+            a_task(tasks, title="A decision", kind="decision")
+            self.assertEqual([t["title"] for t in tasks.list_tasks(kind="decision")],
+                             ["A decision"])
+
     def test_tasks_rank_on_the_existing_h2h_board(self) -> None:
         # The reason for extending the lane model rather than adding a subsystem: ranking,
         # ratings and history work on tasks with no changes at all.
