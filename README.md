@@ -241,5 +241,5 @@ The test suite uses temporary SQLite databases and does not write to the default
 
 `scripts/scheduled_backup.sh` is run daily 21:30 by the launchd agent
 `com.animesh.concinnity-backup` (`~/Library/LaunchAgents/`, log `~/Library/Logs/concinnity/backup.log`).
-It dumps into the private repo `parijjana/concinnity-backup` and commits+pushes only on change.
+It dumps into `project_docs/concinnity-backup` (private) and commits+pushes only on change, committing only the dump files.
 Restore: `uv run concinnity restore <dump> --db <new path> [--verify-against <db>] [--json]`.

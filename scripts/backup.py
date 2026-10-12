@@ -141,7 +141,7 @@ def main() -> int:
                 print("no change to the dump — nothing committed")
             return 0
         msg = f"Concinnity backup ({host}): {counts.get('ideas', 0)} ideas"
-        c = git(["commit", "-q", "-m", msg], top)
+        c = git(["commit", "-q", "-m", msg, "--", str(sql_path), str(meta_path)], top)
         if c.returncode != 0:
             print(c.stdout + c.stderr, file=sys.stderr)
             return 1
