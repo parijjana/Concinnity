@@ -334,6 +334,12 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--commit", action="store_true")
     b.add_argument("--push", action="store_true")
 
+    r = sub.add_parser("restore", help="rebuild a database from a dump (refuses to overwrite)")
+    r.add_argument("dump")
+    r.add_argument("--db", required=True, help="database path to create")
+    r.add_argument("--force", action="store_true")
+    r.add_argument("--verify-against", metavar="DB")
+
     return parser
 
 
@@ -485,6 +491,18 @@ def run(args: argparse.Namespace) -> int:
             cmd.append("--commit")
         if args.push:
             cmd.append("--push")
+        return subprocess.run(cmd).returncode
+
+    elif args.command == "restore":
+        import subprocess
+        script = Path(__file__).resolve().parents[2] / "scripts" / "restore.py"
+        cmd = [sys.executable, str(script), args.dump, "--db", args.db]
+        if args.force:
+            cmd.append("--force")
+        if args.json:
+            cmd.append("--json")
+        if args.verify_against:
+            cmd += ["--verify-against", args.verify_against]
         return subprocess.run(cmd).returncode
 
     return 0
