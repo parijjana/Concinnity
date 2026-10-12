@@ -236,3 +236,10 @@ The test suite uses temporary SQLite databases and does not write to the default
 ## MCP Hub
 
 `mcp-server.yaml` declares a command-per-client stdio lifecycle and an `mcp_initialize` health probe. All paths in the manifest are relative to this server root. The entrypoint sets `UV_CACHE_DIR` to `.uv-cache` so Hub-launched stdio probes use the server-local uv cache.
+
+### Scheduled backup (macOS)
+
+`scripts/scheduled_backup.sh` is run daily 21:30 by the launchd agent
+`com.animesh.concinnity-backup` (`~/Library/LaunchAgents/`, log `~/Library/Logs/concinnity/backup.log`).
+It dumps into the private repo `parijjana/concinnity-backup` and commits+pushes only on change.
+Restore: `uv run concinnity restore <dump> --db <new path> [--verify-against <db>] [--json]`.
